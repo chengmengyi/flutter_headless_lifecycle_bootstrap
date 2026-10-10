@@ -41,8 +41,7 @@ FlutterEngine 不会因为 `HeadlessLifecycleService.onDestroy()` 或 MainActivi
 
 ```yaml
 dependencies:
-  flutter_headless_lifecycle_bootstrap:
-    path: /Users/chengmengyi/testbird/plugins/flutter_headless_lifecycle_bootstrap
+  flutter_headless_lifecycle_bootstrap: ^0.0.1
 ```
 
 然后执行：
