@@ -1,0 +1,4 @@
+-keep class com.flutter.headless.bootstrap.flutter_headless_lifecycle_bootstrap.HeadlessLifecycleService { *; }
+-keep class com.flutter.headless.bootstrap.flutter_headless_lifecycle_bootstrap.LifecycleFlutterActivity { *; }
+-keep class com.flutter.headless.bootstrap.flutter_headless_lifecycle_bootstrap.LifecycleFlutterFragmentActivity { *; }
+-keep class com.flutter.headless.bootstrap.flutter_headless_lifecycle_bootstrap.FlutterHeadlessLifecycleBootstrapPlugin { *; }

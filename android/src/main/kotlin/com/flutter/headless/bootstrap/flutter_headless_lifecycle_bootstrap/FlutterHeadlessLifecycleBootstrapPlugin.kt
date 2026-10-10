@@ -1,5 +1,6 @@
 package com.flutter.headless.bootstrap.flutter_headless_lifecycle_bootstrap
 
+import android.os.Build
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -10,29 +11,41 @@ import io.flutter.plugin.common.MethodChannel.Result
 class FlutterHeadlessLifecycleBootstrapPlugin :
     FlutterPlugin,
     MethodCallHandler {
-    // The MethodChannel that will the communication between Flutter and native Android
-    //
-    // This local reference serves to register the plugin with the Flutter Engine and unregister it
-    // when the Flutter Engine is detached from the Activity
+    companion object {
+        const val CHANNEL_NAME =
+            "flutter_headless_lifecycle_bootstrap/bootstrap"
+    }
+
     private lateinit var channel: MethodChannel
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
-        channel = MethodChannel(flutterPluginBinding.binaryMessenger, "flutter_headless_lifecycle_bootstrap")
+        channel = MethodChannel(flutterPluginBinding.binaryMessenger, CHANNEL_NAME)
         channel.setMethodCallHandler(this)
+        PersistentFlutterEngineManager.onPluginAttached(channel)
     }
 
     override fun onMethodCall(
         call: MethodCall,
         result: Result
     ) {
-        if (call.method == "getPlatformVersion") {
-            result.success("Android ${android.os.Build.VERSION.RELEASE}")
-        } else {
-            result.notImplemented()
+        when (call.method) {
+            "getPlatformVersion" -> result.success("Android ${Build.VERSION.RELEASE}")
+            "bootstrapReady" ->
+                result.success(PersistentFlutterEngineManager.onDartBootstrapReady())
+            "reportDartPhase" -> {
+                val phase = call.argument<String>("phase").orEmpty()
+                val error = call.argument<String>("error")
+                PersistentFlutterEngineManager.onDartPhase(phase, error)
+                result.success(null)
+            }
+            "getNativeBootstrapState" ->
+                result.success(PersistentFlutterEngineManager.currentState())
+            else -> result.notImplemented()
         }
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        PersistentFlutterEngineManager.onPluginDetached(channel)
         channel.setMethodCallHandler(null)
     }
 }

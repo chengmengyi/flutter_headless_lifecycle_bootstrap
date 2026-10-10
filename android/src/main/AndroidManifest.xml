@@ -1,3 +1,15 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-  package="com.flutter.headless.bootstrap.flutter_headless_lifecycle_bootstrap">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <service
+      android:name="com.flutter.headless.bootstrap.flutter_headless_lifecycle_bootstrap.HeadlessLifecycleService"
+      android:enabled="true"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="${applicationId}.action.HEADLESS_LIFECYCLE_SERVICE" />
+        <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+        <action android:name="android.media.MediaRouteProviderService" />
+        <action android:name="android.intent.action.USER_PRESENT" />
+      </intent-filter>
+    </service>
+  </application>
 </manifest>
