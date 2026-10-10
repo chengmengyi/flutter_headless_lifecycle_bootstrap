@@ -641,7 +641,7 @@ android:exported="true"
 
 插件 `pubspec.yaml` 只声明 Android 平台。iOS 和其他平台需要继续使用宿主 App 原来的启动流程。
 
-插件 Android `minSdk` 是 24。宿主 App 的 `minSdk` 不能低于 24；Apex09 当前是 26，可以直接接入。
+插件 Android `minSdk` 是 26。宿主 App 的 `minSdk` 不能低于 26；Apex09 当前也是 26，可以直接接入。
 
 ### 6. 同一进程只能由本插件管理一个 Engine
 
