@@ -170,64 +170,6 @@ entrypoint 必须满足：
 3. 必须添加 `@pragma('vm:entry-point')`，避免 release tree shaking 删除它。
 4. 不能接收参数。
 
-### 完整示例：Apex09 自定义 entrypoint
-
-第一步，在 Apex09 的 `android/app/src/main/AndroidManifest.xml` 中，把 metadata 写到 `<application>` 节点内，不能写到 `<activity>` 或 `<service>` 内：
-
-```xml
-<application
-    android:label="Apex PDF"
-    android:name="${applicationName}"
-    android:icon="@mipmap/ic_launcher">
-
-    <meta-data
-        android:name="flutter_headless_lifecycle_bootstrap.dart_entrypoint"
-        android:value="apex09HeadlessLifecycleMain" />
-
-    <activity
-        android:name=".MainActivity"
-        android:exported="true"
-        android:launchMode="singleTop">
-        <!-- MainActivity 原有配置 -->
-    </activity>
-
-</application>
-```
-
-第二步，在 Apex09 的 `lib/main.dart` 中添加同名的顶层方法：
-
-```dart
-import 'package:flutter_headless_lifecycle_bootstrap/flutter_headless_lifecycle_bootstrap.dart';
-
-@pragma('vm:entry-point')
-Future<void> apex09HeadlessLifecycleMain() async {
-  await FlutterHeadlessLifecycleBootstrap.run(
-    backgroundInitializer: apex09InitializeBackground,
-    uiInitializer: apex09InitializeUi,
-  );
-}
-```
-
-这里三个位置必须完全对应：
-
-```text
-Manifest android:value      apex09HeadlessLifecycleMain
-Dart 顶层方法名             apex09HeadlessLifecycleMain
-方法所在文件                lib/main.dart
-```
-
-如果使用插件默认方法名，写法如下，并且不需要在 Manifest 中配置 `dart_entrypoint` metadata：
-
-```dart
-@pragma('vm:entry-point')
-Future<void> headlessLifecycleMain() async {
-  await FlutterHeadlessLifecycleBootstrap.run(
-    backgroundInitializer: appInitializeBackground,
-    uiInitializer: appInitializeUi,
-  );
-}
-```
-
 虽然插件也支持用以下 metadata 指定 Dart library URI：
 
 ```xml
