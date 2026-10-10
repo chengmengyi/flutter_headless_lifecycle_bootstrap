@@ -224,6 +224,11 @@ Future<void> apex09InitializeBackground() async {
 
   await Apex09StorageUtils.apex09InitStorage();
 
+  // 后台首次拉起时 GetMaterialApp 尚未创建，必须先手动初始化 GetX 翻译。
+  Get.addTranslations(Apex09Translations().keys);
+  Get.locale = Apex09LanguageUtils.instance.apex09CurrentLocale();
+  Get.fallbackLocale = const Locale('en', 'US');
+
   Apex09NewNotificationUtils.instance.startSessionBackground();
 
   await Apex09NewNotificationUtils.instance
@@ -238,8 +243,9 @@ Future<void> apex09InitializeBackground() async {
 执行顺序不能随意交换：
 
 1. 先初始化 Storage。
-2. 再执行完整通知初始化，但必须传 `requestPermission: false`。
-3. 最后启动 Adjust、cloak 和 referrer 判断。
+2. 初始化通知文案依赖的本地语言和 GetX 翻译数据。
+3. 再执行完整通知初始化，但必须传 `requestPermission: false`。
+4. 最后启动 Adjust、cloak 和 referrer 判断。
 
 A 包时 `apex09EnsurePermissionAndInit()` 仍然会注册普通通知。执行到 `startMediaNotificationsIfNeeded()` 时，因为 `apex09IsBPackage == false`，媒体通知会暂时跳过。
 
@@ -393,7 +399,80 @@ apex09EnsurePermissionAndInit(requestPermission: false)
 - A 包的 `startMediaNotificationsIfNeeded()` 直接返回且不设置 `_hasStartedMediaNotifications = true`。
 - B 包状态回来后允许再次调用媒体通知注册。
 
-如果通知标题或正文依赖 GetX `.tr`，要检查在 `runApp(GetMaterialApp(...))` 之前是否能返回正确文本。后台首次拉起时 Widget 和 GetX 页面尚未创建。必要时改用不依赖 Widget context 的本地语言工具，或者先初始化翻译数据。
+### 8.1 GetX `.tr` 必须在通知初始化前准备好
+
+如果通知标题、正文或按钮依赖 GetX `.tr`，不能直接认为后台入口已经具备翻译环境。
+
+后台首次拉起时 `runApp()` 还没有执行，`GetMaterialApp` 也没有创建，因此以下配置尚未自动写入 GetX：
+
+```dart
+translations: Apex09Translations(),
+locale: Apex09LanguageUtils.instance.apex09CurrentLocale(),
+fallbackLocale: const Locale('en', 'US'),
+```
+
+当 `Get.locale` 为空时，GetX 的 `.tr` 会直接返回原始 key。例如：
+
+```dart
+'Home'.tr;              // 返回 Home
+'Check'.tr;             // 返回 Check
+'File size reduced'.tr; // 返回 File size reduced
+```
+
+它不会报错，也不会返回空字符串，但中文、日文等设备或已保存的 App 语言仍会得到英文 key，不是正确的本地化文本。
+
+Apex09 的通知初始化中，以下内容会受到影响：
+
+- 常驻快捷通知的 `Home`、`Merge`、`Import`、`Convert`。
+- 自定义通知按钮的 `Check`。
+- 新文件通知的标题和正文。
+- 周期通知、广播通知和媒体通知的标题、正文及 Channel 描述。
+
+部分周期通知和广播通知注册后会设置“已注册”标记。即使用户稍后真正打开 App，前台再次调用通知初始化也可能因为这些标记而跳过注册，所以不能依靠 `GetMaterialApp` 创建后自动修正文案。
+
+#### Apex09 接入方式
+
+在 `Apex09StorageUtils.apex09InitStorage()` 完成之后、任何通知初始化之前，手动写入翻译表、当前语言和回退语言：
+
+确认 `main.dart` 可以使用 Flutter 的 `Locale` 和 GetX 的 `Get`；如果项目没有通过自己的公共库导出它们，可直接导入：
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+```
+
+```dart
+Future<void> apex09InitializeBackground() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Apex09StorageUtils.apex09InitStorage();
+
+  Get.addTranslations(Apex09Translations().keys);
+  Get.locale = Apex09LanguageUtils.instance.apex09CurrentLocale();
+  Get.fallbackLocale = const Locale('en', 'US');
+
+  Apex09NewNotificationUtils.instance.startSessionBackground();
+
+  await Apex09NewNotificationUtils.instance
+      .apex09EnsurePermissionAndInit(
+        requestPermission: false,
+      );
+
+  await Apex09AdjustUtils.instance.apex09InitAdjust();
+}
+```
+
+注意调用顺序：
+
+1. 必须先初始化 Storage，因为 `apex09CurrentLocale()` 会读取用户已经保存的语言。
+2. 然后调用 `Get.addTranslations()`、设置 `Get.locale` 和 `Get.fallbackLocale`。
+3. 最后才能调用任何会计算 `.tr` 文案的通知方法。
+
+这段初始化不依赖 Widget 或 `BuildContext`，可以在无 Activity 的后台 FlutterEngine 中执行。后面创建 `GetMaterialApp` 时再次添加相同翻译数据没有问题。
+
+其他 App 接入本插件时，如果翻译类、语言存储或命名不同，需要替换为该 App 自己的实现。公共插件无法代替宿主 App 初始化业务翻译表。
+
+如果不希望提前初始化 GetX，也可以实现一个直接读取本地翻译 Map 的语言工具，并让后台通知完全不使用 `.tr`；但同一 App 中只能选择一套明确、可测试的后台翻译方案。
 
 ## 九、验证 Manifest 合并结果
 
