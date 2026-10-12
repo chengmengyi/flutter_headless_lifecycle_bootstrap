@@ -645,6 +645,21 @@ timeout。正常点击图标冷启动时不应该出现 `start headless adjust l
 
 ## 十一、必须执行的测试清单
 
+测试前建议先执行以下命令，同时查看并保存 Headless、Flutter 和 Adjust 日志：
+
+```shell
+adb logcat -v time \
+  'HeadlessLifecycle:D' \
+  'flutter:I' \
+  'Adjust:V' \
+  'AdjustBridge:V' \
+  '*:S' | tee "$HOME/Downloads/adjust_headless.txt"
+```
+
+这里使用 `$HOME`，不依赖 `/Users/某个用户名`，换电脑后仍会保存到当前登录
+用户的 Downloads 目录。按 `Ctrl+C` 停止抓取；同名文件会被覆盖。如果需要保留
+上一次日志，把 `tee` 改成 `tee -a` 以追加写入。
+
 ### 场景 1：安装后从未手动打开 App
 
 1. 安装 release/debug 包。
