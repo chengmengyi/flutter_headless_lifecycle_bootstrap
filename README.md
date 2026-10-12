@@ -520,8 +520,9 @@ await AppAdjustUtils.instance.initAdjust(
 - 正常点击图标启动时为 `false`，不手动干预 Adjust，由 Activity 自动管理。
 - YouTube/Service 无界面拉活时为 `true`，初始化后补一次
   `Adjust.onResume()`，使首次 session 和归因请求真正开始。
-- attribution、session 成功或 session 失败任一回调到达后，只执行一次
-  `Adjust.onPause()`，结束模拟前台。
+- attribution 回调到达后，只执行一次 `Adjust.onPause()`，结束模拟前台。
+- session 成功或失败不结束模拟前台，因为 session 响应不代表 attribution
+  回调已经派发。
 - 默认 15 秒安全定时器只负责结束模拟前台，不销毁 FlutterEngine、不移除
   attribution 回调，也不结束宿主的后台等待逻辑。
 
@@ -722,8 +723,8 @@ check user---> request adjust result--->network:...
 check user---> finish headless adjust lifecycle--->...
 ```
 
-最后一条的原因可能是 attribution callback、session callback 或 safety
-timeout。正常点击图标冷启动时不应该出现 `start headless adjust lifecycle`。
+最后一条的原因只可能是 attribution callback、safety timeout 或 UI 主动交接。
+正常点击图标冷启动时不应该出现 `start headless adjust lifecycle`。
 
 ## 十一、必须执行的测试清单
 
