@@ -226,6 +226,9 @@ Future<void> initializeBackground() async {
 
   await AppStorageUtils.initStorage();
 
+  // Service 无界面拉活也上报 install；不要在这里上报 session。
+  unawaited(AppTbaUtils.instance.trackInstallEvent());
+
   // 后台首次拉起时 GetMaterialApp 尚未创建，必须先手动初始化 GetX 翻译。
   Get.addTranslations(AppTranslations().keys);
   Get.locale = AppLanguageUtils.instance.currentLocale();
@@ -255,6 +258,83 @@ Future<void> initializeBackground() async {
 3. 再执行完整通知初始化，但必须传 `requestPermission: false`。
 4. 最后启动 Adjust、cloak 和 referrer 判断，并把本次是否由无界面
    Service 拉起传给 Adjust 工具类。
+
+#### 6.2.1 Headless 上报 install，但不上报 session
+
+如果希望 Service 无界面拉活也计为安装上报，把 install 放进
+`initializeBackground()`；不要把 session 放进去：
+
+```dart
+unawaited(AppTbaUtils.instance.trackInstallEvent());
+```
+
+UI 初始化中仍然保留 install 和 session：
+
+```dart
+// Headless install 已成功时直接跳过；失败时在真正打开 App 后重试。
+unawaited(AppTbaUtils.instance.trackInstallEvent());
+
+// 只在真实 UI 启动时上报 session。
+unawaited(AppTbaUtils.instance.trackSessionEvent());
+```
+
+install 方法除了“成功后持久化已上报状态”，还必须增加“请求进行中”的 Future
+保护。否则 Headless 请求尚未结束时用户打开 App，后台和 UI 可能并发上报两次：
+
+```dart
+Future<bool>? _installFuture;
+
+Future<bool> trackInstallEvent({
+  bool force = false,
+  bool limitedTracking = false,
+}) async {
+  if (!force && installReportedStorage.getData()) {
+    return true;
+  }
+  if (!force) {
+    final Future<bool>? runningFuture = _installFuture;
+    if (runningFuture != null) {
+      return runningFuture;
+    }
+  }
+
+  final Future<bool> future = _trackInstallEventInternal(
+    limitedTracking: limitedTracking,
+  );
+  if (force) {
+    return future;
+  }
+
+  _installFuture = future;
+  try {
+    return await future;
+  } finally {
+    if (identical(_installFuture, future)) {
+      _installFuture = null;
+    }
+  }
+}
+
+Future<bool> _trackInstallEventInternal({
+  required bool limitedTracking,
+}) async {
+  final Map<String, dynamic> payload = await buildInstallPayload(
+    limitedTracking: limitedTracking,
+  );
+  final bool success = await sendSinglePayload(
+    type: 'install',
+    payload: payload,
+  );
+  if (success) {
+    await installReportedStorage.saveData(true);
+  }
+  return success;
+}
+```
+
+`force: true` 表示调用方明确要求强制上报，因此会绕过持久化状态和进行中 Future
+保护。普通调用共享同一个 Future：成功后永久跳过，失败后清空 Future，允许 UI
+启动或下次进程启动时再次尝试。
 
 A 包时 `ensurePermissionAndInit()` 仍然会注册普通通知。执行到 `startMediaNotificationsIfNeeded()` 时，因为 `isBPackage == false`，媒体通知会暂时跳过。
 
@@ -539,6 +619,8 @@ Future<void> initializeBackground() async {
 
   await AppStorageUtils.initStorage();
 
+  unawaited(AppTbaUtils.instance.trackInstallEvent());
+
   Get.addTranslations(AppTranslations().keys);
   Get.locale = AppLanguageUtils.instance.currentLocale();
   Get.fallbackLocale = const Locale('en', 'US');
@@ -667,7 +749,9 @@ adb logcat -v time \
 3. 打开 YouTube。
 4. 查看是否出现 `serviceOnCreate`。
 5. 查看是否出现 `backgroundInitializationCompleted`。
-6. 验证普通通知配置已经注册。
+6. 确认出现一次 install 请求及结果日志。
+7. 确认没有 session 请求日志。
+8. 验证普通通知配置已经注册。
 
 ### 场景 2：默认 A 包
 
@@ -690,7 +774,9 @@ adb logcat -v time \
 2. 点击桌面图标。
 3. 确认只出现 `reuseEngine`，没有第二次 `createEngine`。
 4. 确认启动页和首页正常显示。
-5. 确认通知点击、悬浮窗点击、广告和页面跳转正常，且没有重复触发两次。
+5. 确认 install 没有重复成功上报，Headless 失败时允许 UI 重试。
+6. 确认打开 UI 后才出现 session 请求。
+7. 确认通知点击、悬浮窗点击、广告和页面跳转正常，且没有重复触发两次。
 
 ### 场景 5：先正常打开 App
 
