@@ -1,7 +1,7 @@
 name: flutter_headless_lifecycle_bootstrap
 description: "Starts one long-lived FlutterEngine from an Android discovery service and reuses it for the app UI."
-version: 0.0.2
-homepage:
+version: 0.0.1
+homepage: https://github.com/chengmengyi/flutter_headless_lifecycle_bootstrap
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
