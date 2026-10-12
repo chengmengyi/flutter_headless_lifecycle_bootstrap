@@ -1,3 +1,8 @@
+## 0.0.2
+
+* Expose the initial UI-request state for headless-aware SDK initialization.
+* Document the safe Adjust headless lifecycle pulse and UI handoff.
+
 ## 0.0.1
 
 * Add an exported Android lifecycle discovery service.

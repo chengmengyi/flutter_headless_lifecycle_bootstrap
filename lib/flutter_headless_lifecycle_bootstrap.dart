@@ -23,6 +23,7 @@ class FlutterHeadlessLifecycleBootstrap {
 
   static bool _hasStarted = false;
   static bool _backgroundInitializationCompleted = false;
+  static bool _initialUiRequested = false;
   static bool _uiRequested = false;
   static bool _uiStarted = false;
   static Future<void>? _backgroundInitializationFuture;
@@ -62,6 +63,7 @@ class FlutterHeadlessLifecycleBootstrap {
     _channel.setMethodCallHandler(_handleNativeMethodCall);
 
     final bool nativeUiRequested = await _notifyNativeBootstrapReady();
+    _initialUiRequested = nativeUiRequested;
     if (nativeUiRequested) {
       _uiRequested = true;
     }
@@ -88,6 +90,7 @@ class FlutterHeadlessLifecycleBootstrap {
           'hasStarted': _hasStarted,
           'backgroundInitializationCompleted':
               _backgroundInitializationCompleted,
+          'initialUiRequested': _initialUiRequested,
           'uiRequested': _uiRequested,
           'uiStarted': _uiStarted,
         };
@@ -199,11 +202,29 @@ class FlutterHeadlessLifecycleBootstrap {
     );
   }
 
+  /// Whether Android had already requested a visible Activity when this Dart
+  /// bootstrap started.
+  ///
+  /// This value is finalized before [backgroundInitializer] runs. A `true`
+  /// value means normal UI startup; `false` means a Service created the engine
+  /// without an Activity.
+  static bool get initialUiRequested => _initialUiRequested;
+
+  /// Whether this isolate was initially created without a visible Activity.
+  ///
+  /// This is the value host applications should pass to plugins that need an
+  /// explicit headless lifecycle pulse, such as Adjust session startup.
+  static bool get startedHeadlessly => _hasStarted && !_initialUiRequested;
+
+  /// Whether Android has requested UI at any point in this process.
+  static bool get isUiRequested => _uiRequested;
+
   /// Current Dart-side state for diagnostics and tests.
   @visibleForTesting
   static Map<String, bool> get debugState => <String, bool>{
         'hasStarted': _hasStarted,
         'backgroundInitializationCompleted': _backgroundInitializationCompleted,
+        'initialUiRequested': _initialUiRequested,
         'uiRequested': _uiRequested,
         'uiStarted': _uiStarted,
       };

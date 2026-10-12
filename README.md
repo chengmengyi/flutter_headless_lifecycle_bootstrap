@@ -42,6 +42,7 @@ FlutterEngine 不会因为 `HeadlessLifecycleService.onDestroy()` 或 MainActivi
 ```yaml
 dependencies:
   flutter_headless_lifecycle_bootstrap: 最新版本
+  flutter_check_adjust: 最新版本
 ```
 
 然后执行：
@@ -236,7 +237,10 @@ Future<void> apex09InitializeBackground() async {
         requestPermission: false,
       );
 
-  await Apex09AdjustUtils.instance.apex09InitAdjust();
+  await Apex09AdjustUtils.instance.apex09InitAdjust(
+    apex09HeadlessStart:
+        FlutterHeadlessLifecycleBootstrap.startedHeadlessly,
+  );
 }
 ```
 
@@ -245,7 +249,8 @@ Future<void> apex09InitializeBackground() async {
 1. 先初始化 Storage。
 2. 初始化通知文案依赖的本地语言和 GetX 翻译数据。
 3. 再执行完整通知初始化，但必须传 `requestPermission: false`。
-4. 最后启动 Adjust、cloak 和 referrer 判断。
+4. 最后启动 Adjust、cloak 和 referrer 判断，并把本次是否由无界面
+   Service 拉起传给 Adjust 工具类。
 
 A 包时 `apex09EnsurePermissionAndInit()` 仍然会注册普通通知。执行到 `startMediaNotificationsIfNeeded()` 时，因为 `apex09IsBPackage == false`，媒体通知会暂时跳过。
 
@@ -267,6 +272,10 @@ A 包时 `apex09EnsurePermissionAndInit()` 仍然会注册普通通知。执行�
 
 ```dart
 Future<void> apex09InitializeUi() async {
+  // 必须放在 UI 初始化最前面。如果 Headless Adjust 的模拟前台仍在
+  // 进行，这里会先结束模拟状态，再切换到真实 Activity 前台状态。
+  FlutterCheckAdjust.instance.switchToUiLifecycle();
+
   await SystemChrome.setPreferredOrientations(
     <DeviceOrientation>[
       DeviceOrientation.portraitUp,
@@ -340,7 +349,7 @@ Future<void> main() async {
 ```dart
 bool _apex09HasInitializedAdjust = false;
 
-Future<void> apex09InitAdjust() async {
+Future<void> apex09InitAdjust({bool apex09HeadlessStart = false}) async {
   if (_apex09HasInitializedAdjust) {
     return;
   }
@@ -380,6 +389,89 @@ Apex09NewNotificationUtils.instance
 ```
 
 建议给 `startMediaNotificationsIfNeeded()` 增加“正在启动”的 Future 或布尔值，避免 Adjust、cloak、referrer 回调接近时并发注册媒体通知。
+
+### 7.4 把 Headless 启动状态传给 flutter_check_adjust
+
+只升级 Adjust SDK 不能解决纯 Service 拉活时收不到首次归因的问题。Adjust 的
+Android 生命周期仍然依赖 Activity 的 `onResume/onPause`；无 Activity 时首次
+session 不会自动启动。
+
+`flutter_check_adjust` 提供了受控的 Headless 生命周期补偿。把
+`Apex09AdjustUtils.apex09InitAdjust()` 改成可接收启动状态：
+
+```dart
+Future<void> apex09InitAdjust({bool apex09HeadlessStart = false}) async {
+  if (_apex09HasInitializedAdjust) {
+    return;
+  }
+  _apex09HasInitializedAdjust = true;
+
+  await apex09SetReferrerConfig();
+  refreshBUserState();
+
+  // 省略 distinctId、cloakData 和 RequestCallback 的原有组装代码。
+  FlutterCheckAdjust.instance.init(
+    adjustAppToken: Apex09LocalInfo.adjustToken,
+    distinctId: apex09DistinctId,
+    clockUrl: Apex09LocalInfo.cloakUrl,
+    cloakWhiteKey: 'anatole',
+    cloakData: apex09CloakData,
+    requestCallback: apex09RequestCallback,
+    headlessStart: apex09HeadlessStart,
+  );
+}
+```
+
+后台初始化时必须传入插件在握手阶段固定下来的启动状态：
+
+```dart
+await Apex09AdjustUtils.instance.apex09InitAdjust(
+  apex09HeadlessStart:
+      FlutterHeadlessLifecycleBootstrap.startedHeadlessly,
+);
+```
+
+不要使用稍后会变化的 `isUiRequested` 来判断初始启动来源。用户可能在后台
+初始化过程中点击 App 图标，此时 `isUiRequested` 会从 `false` 变为 `true`，
+而 `startedHeadlessly` 始终保留本次 Engine 的真实创建方式。
+
+这个参数的行为是：
+
+- 正常点击图标启动时为 `false`，不手动干预 Adjust，由 Activity 自动管理。
+- YouTube/Service 无界面拉活时为 `true`，初始化后补一次
+  `Adjust.onResume()`，使首次 session 和归因请求真正开始。
+- attribution、session 成功或 session 失败任一回调到达后，只执行一次
+  `Adjust.onPause()`，结束模拟前台。
+- 默认 15 秒安全定时器只负责结束模拟前台，不销毁 FlutterEngine、不移除
+  attribution 回调，也不结束宿主的后台等待逻辑。
+
+如需调整安全窗口，可以在初始化时传入：
+
+```dart
+headlessLifecycleTimeout: const Duration(seconds: 15),
+```
+
+不要再在宿主 App 或 `request_adjust.dart` 中无条件调用
+`Adjust.onResume()`。否则正常启动时会同时收到 Activity 自动生命周期和手动
+生命周期。
+
+### 7.5 UI 出现时交接 Adjust 生命周期
+
+如果用户在 15 秒窗口内点击图标，需要结束模拟前台并让 Adjust 最终保持真实
+Activity 前台状态。因此在 `apex09InitializeUi()` 的第一行调用：
+
+```dart
+FlutterCheckAdjust.instance.switchToUiLifecycle();
+```
+
+这个方法是幂等的：
+
+- 本来就是正常 UI 启动时不做任何事。
+- Headless 生命周期已经被回调或定时器结束时不做任何事。
+- 只有 Headless 模拟前台仍在进行时，才按 `onPause → onResume` 完成交接。
+
+后续用户按 Home、重新进入 App 等生命周期继续由 Adjust Android SDK 自动
+管理，宿主不需要再次调用该方法。
 
 ## 八、通知初始化注意事项
 
@@ -458,7 +550,10 @@ Future<void> apex09InitializeBackground() async {
         requestPermission: false,
       );
 
-  await Apex09AdjustUtils.instance.apex09InitAdjust();
+  await Apex09AdjustUtils.instance.apex09InitAdjust(
+    apex09HeadlessStart:
+        FlutterHeadlessLifecycleBootstrap.startedHeadlessly,
+  );
 }
 ```
 
@@ -536,6 +631,18 @@ dartPhase phase=uiInitializationCompleted
 
 不应该再次出现第二条 `createEngine`。
 
+通过 Service 首次拉活时，Flutter debug 日志还应出现：
+
+```text
+check user---> start request adjust
+check user---> start headless adjust lifecycle
+check user---> request adjust result--->network:...
+check user---> finish headless adjust lifecycle--->...
+```
+
+最后一条的原因可能是 attribution callback、session callback 或 safety
+timeout。正常点击图标冷启动时不应该出现 `start headless adjust lifecycle`。
+
 ## 十一、必须执行的测试清单
 
 ### 场景 1：安装后从未手动打开 App
@@ -556,10 +663,11 @@ dartPhase phase=uiInitializationCompleted
 ### 场景 3：延迟变成 B 包
 
 1. 保持进程存在。
-2. 等待 Adjust、cloak、referrer 回调。
-3. 确认 `refreshBUserState()` 变成 B。
-4. 确认 `startMediaNotificationsIfNeeded()` 被再次调用。
-5. 确认媒体通知注册成功。
+2. 不点击 App 图标，等待 Adjust、cloak、referrer 回调。
+3. 确认出现 `request adjust result`，证明 Headless Adjust session 已启动。
+4. 确认 `refreshBUserState()` 变成 B。
+5. 确认 `startMediaNotificationsIfNeeded()` 被再次调用。
+6. 确认媒体通知注册成功。
 
 ### 场景 4：后台 Engine 已存在后打开 App
 
