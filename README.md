@@ -61,21 +61,21 @@ flutter pub get
 
 所以宿主 App 必须删除旧 Service，避免出现两个可被 YouTube 发现的 Service。
 
-以 Apex09 为例，删除：
+例如宿主原来存在以下 Service 文件，需要删除：
 
 ```text
-android/app/src/main/kotlin/com/example/apex09/Apex09LifecycleService.kt
+android/app/src/main/kotlin/com/example/app/LegacyLifecycleService.kt
 ```
 
 同时从 `android/app/src/main/AndroidManifest.xml` 删除：
 
 ```xml
 <service
-    android:name=".Apex09LifecycleService"
+    android:name=".LegacyLifecycleService"
     android:enabled="true"
     android:exported="true">
     <intent-filter>
-        <action android:name="${applicationId}.action.APEX09_LIFECYCLE_SERVICE" />
+        <action android:name="${applicationId}.action.LIFECYCLE_SERVICE" />
         <action android:name="android.intent.action.TIMEZONE_CHANGED" />
         <action android:name="android.media.MediaRouteProviderService" />
         <action android:name="android.intent.action.USER_PRESENT" />
@@ -89,7 +89,7 @@ android/app/src/main/kotlin/com/example/apex09/Apex09LifecycleService.kt
 
 ### 使用 FlutterActivity 的项目
 
-Apex09 当前使用 `FlutterActivity`，把：
+如果宿主当前使用 `FlutterActivity`，把：
 
 ```kotlin
 import io.flutter.embedding.android.FlutterActivity
@@ -100,7 +100,7 @@ class MainActivity : FlutterActivity()
 改成：
 
 ```kotlin
-package com.example.apex09
+package com.example.app
 
 import com.flutter.headless.bootstrap.flutter_headless_lifecycle_bootstrap.LifecycleFlutterActivity
 
@@ -150,10 +150,10 @@ headlessLifecycleMain
 
 的方法。如果使用默认名称，Manifest 不需要额外配置。
 
-如果要遵循 App 自己的命名规范，例如 Apex09 使用：
+如果要遵循 App 自己的命名规范，例如改成：
 
 ```dart
-apex09HeadlessLifecycleMain
+customHeadlessLifecycleMain
 ```
 
 需要在宿主 App 的 `<application>` 中添加：
@@ -161,7 +161,7 @@ apex09HeadlessLifecycleMain
 ```xml
 <meta-data
     android:name="flutter_headless_lifecycle_bootstrap.dart_entrypoint"
-    android:value="apex09HeadlessLifecycleMain" />
+    android:value="customHeadlessLifecycleMain" />
 ```
 
 entrypoint 必须满足：
@@ -188,12 +188,12 @@ entrypoint 必须满足：
 原来的 `main()` 需要拆成：
 
 ```text
-后台公共初始化 apex09InitializeBackground
-UI初始化       apex09InitializeUi
-Dart入口       apex09HeadlessLifecycleMain
+后台公共初始化 initializeBackground
+UI初始化       initializeUi
+Dart入口       headlessLifecycleMain
 ```
 
-### 6.1 Apex09 的 Dart 入口
+### 6.1 宿主 App 的 Dart 入口
 
 在 `lib/main.dart` 中导入插件：
 
@@ -205,44 +205,48 @@ import 'package:flutter_headless_lifecycle_bootstrap/flutter_headless_lifecycle_
 
 ```dart
 @pragma('vm:entry-point')
-Future<void> apex09HeadlessLifecycleMain() async {
+Future<void> headlessLifecycleMain() async {
   await FlutterHeadlessLifecycleBootstrap.run(
-    backgroundInitializer: apex09InitializeBackground,
-    uiInitializer: apex09InitializeUi,
+    backgroundInitializer: initializeBackground,
+    uiInitializer: initializeUi,
   );
 }
 ```
 
-确保 Manifest 中配置的名称和这里完全一致，包括大小写。
+这里使用插件默认入口名，所以不需要额外配置 entrypoint metadata。如果自行改名，
+Manifest 中配置的名称必须和代码完全一致，包括大小写。
 
 ### 6.2 后台公共初始化
 
-建议 Apex09 使用：
+宿主 App 可以按下面的结构初始化：
 
 ```dart
-Future<void> apex09InitializeBackground() async {
+Future<void> initializeBackground() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Apex09StorageUtils.apex09InitStorage();
+  await AppStorageUtils.initStorage();
 
   // 后台首次拉起时 GetMaterialApp 尚未创建，必须先手动初始化 GetX 翻译。
-  Get.addTranslations(Apex09Translations().keys);
-  Get.locale = Apex09LanguageUtils.instance.apex09CurrentLocale();
+  Get.addTranslations(AppTranslations().keys);
+  Get.locale = AppLanguageUtils.instance.currentLocale();
   Get.fallbackLocale = const Locale('en', 'US');
 
-  Apex09NewNotificationUtils.instance.startSessionBackground();
+  AppNotificationUtils.instance.startSessionBackground();
 
-  await Apex09NewNotificationUtils.instance
-      .apex09EnsurePermissionAndInit(
+  await AppNotificationUtils.instance
+      .ensurePermissionAndInit(
         requestPermission: false,
       );
 
-  await Apex09AdjustUtils.instance.apex09InitAdjust(
-    apex09HeadlessStart:
+  await AppAdjustUtils.instance.initAdjust(
+    headlessStart:
         FlutterHeadlessLifecycleBootstrap.startedHeadlessly,
   );
 }
 ```
+
+示例中的 `AppStorageUtils`、`AppNotificationUtils`、`AppAdjustUtils` 等都是
+通用占位名称，需要替换成宿主项目自己的类和方法；公共插件不要求这些类真实存在。
 
 执行顺序不能随意交换：
 
@@ -252,9 +256,9 @@ Future<void> apex09InitializeBackground() async {
 4. 最后启动 Adjust、cloak 和 referrer 判断，并把本次是否由无界面
    Service 拉起传给 Adjust 工具类。
 
-A 包时 `apex09EnsurePermissionAndInit()` 仍然会注册普通通知。执行到 `startMediaNotificationsIfNeeded()` 时，因为 `apex09IsBPackage == false`，媒体通知会暂时跳过。
+A 包时 `ensurePermissionAndInit()` 仍然会注册普通通知。执行到 `startMediaNotificationsIfNeeded()` 时，因为 `isBPackage == false`，媒体通知会暂时跳过。
 
-如果后续判断为 B 包，`Apex09AdjustUtils.refreshBUserState()` 会重新调用 `startMediaNotificationsIfNeeded()`，完成媒体通知注册。插件不会设置等待超时，所以只要进程和 FlutterEngine 还存在，后续回调仍可执行。
+如果后续判断为 B 包，`AppAdjustUtils.refreshBUserState()` 会重新调用 `startMediaNotificationsIfNeeded()`，完成媒体通知注册。插件不会设置等待超时，所以只要进程和 FlutterEngine 还存在，后续回调仍可执行。
 
 后台初始化中禁止执行以下操作：
 
@@ -268,10 +272,10 @@ A 包时 `apex09EnsurePermissionAndInit()` 仍然会注册普通通知。执行�
 
 ### 6.3 UI 初始化
 
-把 Apex09 原来 `main()` 中其余逻辑放入：
+把宿主 App 原来 `main()` 中其余逻辑放入：
 
 ```dart
-Future<void> apex09InitializeUi() async {
+Future<void> initializeUi() async {
   // 必须放在 UI 初始化最前面。如果 Headless Adjust 的模拟前台仍在
   // 进行，这里会先结束模拟状态，再切换到真实 Activity 前台状态。
   FlutterCheckAdjust.instance.switchToUiLifecycle();
@@ -282,51 +286,47 @@ Future<void> apex09InitializeUi() async {
     ],
   );
 
-  await Apex09AdSwitchUtils.instance.apex09Init();
+  await AppAdSwitchUtils.instance.init();
 
-  Apex09QuickActionsUtils.instance.apex09InitQuickActions(
-    apex09UninstallTitle: Apex09LanguageUtils.instance
-        .apex09QuickActionUninstallTitle(),
+  AppQuickActionsUtils.instance.initQuickActions(
+    uninstallTitle: AppLanguageUtils.instance.quickActionUninstallTitle(),
   );
 
-  Apex09LaunchSourceUtils.instance.configureWidgetActionSource(
+  AppLaunchSourceUtils.instance.configureWidgetActionSource(
     consumeInitialWidgetAction:
-        Apex09page.instance.apex09ConsumeInitialWidgetAction,
+        AppPage.instance.consumeInitialWidgetAction,
     widgetActionStreamProvider:
-        Apex09page.instance.apex09WidgetActionStream,
+        AppPage.instance.widgetActionStream,
   );
 
-  await Apex09LaunchSourceUtils.instance.initLaunchSource();
-  Apex09SqlUtils.instance.apex09InitSql();
-  Apex09AdUtils.instance.apex09InitAd();
+  await AppLaunchSourceUtils.instance.initLaunchSource();
+  AppSqlUtils.instance.initSql();
+  AppAdUtils.instance.initAd();
 
-  Apex09NewNotificationUtils.instance
-      .apex09SetShortcutPayloadNavigationHandler(
-        apex09OpenMergePdf:
-            Apex09PdfToolActionUtils.instance.apex09OpenMergePdf,
-        apex09OpenScanToPdf:
-            Apex09PdfToolActionUtils.instance.apex09OpenScanToPdf,
-        apex09OpenWordToPdf:
-            Apex09PdfToolActionUtils.instance.apex09OpenWordToPdf,
+  AppNotificationUtils.instance
+      .setShortcutPayloadNavigationHandler(
+        openMergePdf: AppPdfToolActionUtils.instance.openMergePdf,
+        openScanToPdf: AppPdfToolActionUtils.instance.openScanToPdf,
+        openWordToPdf: AppPdfToolActionUtils.instance.openWordToPdf,
       );
 
-  unawaited(Apex09ProcessingOverlayUtils.instance.apex09Init());
-  Apex09TbaUtils.instance.apex09FlushPendingEvents();
-  unawaited(Apex09TbaUtils.instance.apex09TrackInstallEvent());
-  unawaited(Apex09TbaUtils.instance.apex09TrackSessionEvent());
-  Apex09NewNotificationUtils.instance.consumeLaunchNotificationTracking();
+  unawaited(AppProcessingOverlayUtils.instance.init());
+  AppTbaUtils.instance.flushPendingEvents();
+  unawaited(AppTbaUtils.instance.trackInstallEvent());
+  unawaited(AppTbaUtils.instance.trackSessionEvent());
+  AppNotificationUtils.instance.consumeLaunchNotificationTracking();
 
-  runApp(const Apex09App());
+  runApp(const App());
 }
 ```
 
 注意：
 
-- 不要再次调用 `Apex09StorageUtils.apex09InitStorage()`。
-- 不要再次调用 `Apex09NewNotificationUtils.instance.startSessionBackground()`。
-- 不要再次调用 `Apex09AdjustUtils.instance.apex09InitAdjust()`。
+- 不要再次调用 `AppStorageUtils.initStorage()`。
+- 不要再次调用 `AppNotificationUtils.instance.startSessionBackground()`。
+- 不要再次调用 `AppAdjustUtils.instance.initAdjust()`。
 - `runApp()` 只能调用一次。
-- `Apex09LauncherController` 中前台调用 `apex09EnsurePermissionAndInit(requestPermission: true)` 可以保留，用于请求权限和完成前台逻辑。
+- `LauncherController` 中前台调用 `ensurePermissionAndInit(requestPermission: true)` 可以保留，用于请求权限和完成前台逻辑。
 
 ### 6.4 原来的 main() 怎么处理
 
@@ -334,46 +334,46 @@ Android 不再依靠默认 `main()` 启动，而是由原生 Manager 执行配�
 
 ```dart
 Future<void> main() async {
-  await apex09HeadlessLifecycleMain();
+  await headlessLifecycleMain();
 }
 ```
 
 如果这个工程还支持 iOS、macOS、Windows 或 Web，不要直接照抄上面的 `main()`。本插件目前只声明 Android 平台，其他平台需要在 `main()` 中走原来的正常初始化和 `runApp()` 路径。
 
-## 七、修改 Apex09AdjustUtils
+## 七、修改宿主 App 的 Adjust 工具类
 
 ### 7.1 增加一次性初始化保护
 
 建议增加：
 
 ```dart
-bool _apex09HasInitializedAdjust = false;
+bool _hasInitializedAdjust = false;
 
-Future<void> apex09InitAdjust({bool apex09HeadlessStart = false}) async {
-  if (_apex09HasInitializedAdjust) {
+Future<void> initAdjust({bool headlessStart = false}) async {
+  if (_hasInitializedAdjust) {
     return;
   }
-  _apex09HasInitializedAdjust = true;
+  _hasInitializedAdjust = true;
 
   // 原初始化逻辑
 }
 ```
 
-如果初始化过程可能同步抛错，并且希望以后重试，应在异常时把 `_apex09HasInitializedAdjust` 恢复为 `false`。
+如果初始化过程可能同步抛错，并且希望以后重试，应在异常时把 `_hasInitializedAdjust` 恢复为 `false`。
 
 ### 7.2 等待 referrer 配置加载
 
 把：
 
 ```dart
-apex09SetReferrerConfig();
+setReferrerConfig();
 refreshBUserState();
 ```
 
 改成：
 
 ```dart
-await apex09SetReferrerConfig();
+await setReferrerConfig();
 refreshBUserState();
 ```
 
@@ -384,7 +384,7 @@ refreshBUserState();
 确认 `refreshBUserState()` 在状态从 A 切换为 B 时仍调用：
 
 ```dart
-Apex09NewNotificationUtils.instance
+AppNotificationUtils.instance
     .startMediaNotificationsIfNeeded();
 ```
 
@@ -396,28 +396,28 @@ Apex09NewNotificationUtils.instance
 Android 生命周期仍然依赖 Activity 的 `onResume/onPause`；无 Activity 时首次
 session 不会自动启动。
 
-`flutter_check_adjust` 提供了受控的 Headless 生命周期补偿。把
-`Apex09AdjustUtils.apex09InitAdjust()` 改成可接收启动状态：
+`flutter_check_adjust` 提供了受控的 Headless 生命周期补偿。把宿主 App 的
+`AppAdjustUtils.initAdjust()` 改成可接收启动状态：
 
 ```dart
-Future<void> apex09InitAdjust({bool apex09HeadlessStart = false}) async {
-  if (_apex09HasInitializedAdjust) {
+Future<void> initAdjust({bool headlessStart = false}) async {
+  if (_hasInitializedAdjust) {
     return;
   }
-  _apex09HasInitializedAdjust = true;
+  _hasInitializedAdjust = true;
 
-  await apex09SetReferrerConfig();
+  await setReferrerConfig();
   refreshBUserState();
 
   // 省略 distinctId、cloakData 和 RequestCallback 的原有组装代码。
   FlutterCheckAdjust.instance.init(
-    adjustAppToken: Apex09LocalInfo.adjustToken,
-    distinctId: apex09DistinctId,
-    clockUrl: Apex09LocalInfo.cloakUrl,
+    adjustAppToken: AppLocalInfo.adjustToken,
+    distinctId: distinctId,
+    clockUrl: AppLocalInfo.cloakUrl,
     cloakWhiteKey: 'anatole',
-    cloakData: apex09CloakData,
-    requestCallback: apex09RequestCallback,
-    headlessStart: apex09HeadlessStart,
+    cloakData: cloakData,
+    requestCallback: requestCallback,
+    headlessStart: headlessStart,
   );
 }
 ```
@@ -425,8 +425,8 @@ Future<void> apex09InitAdjust({bool apex09HeadlessStart = false}) async {
 后台初始化时必须传入插件在握手阶段固定下来的启动状态：
 
 ```dart
-await Apex09AdjustUtils.instance.apex09InitAdjust(
-  apex09HeadlessStart:
+await AppAdjustUtils.instance.initAdjust(
+  headlessStart:
       FlutterHeadlessLifecycleBootstrap.startedHeadlessly,
 );
 ```
@@ -458,7 +458,7 @@ headlessLifecycleTimeout: const Duration(seconds: 15),
 ### 7.5 UI 出现时交接 Adjust 生命周期
 
 如果用户在 15 秒窗口内点击图标，需要结束模拟前台并让 Adjust 最终保持真实
-Activity 前台状态。因此在 `apex09InitializeUi()` 的第一行调用：
+Activity 前台状态。因此在 `initializeUi()` 的第一行调用：
 
 ```dart
 FlutterCheckAdjust.instance.switchToUiLifecycle();
@@ -478,7 +478,7 @@ FlutterCheckAdjust.instance.switchToUiLifecycle();
 后台入口调用：
 
 ```dart
-apex09EnsurePermissionAndInit(requestPermission: false)
+ensurePermissionAndInit(requestPermission: false)
 ```
 
 因此必须确认这个方法满足：
@@ -498,8 +498,8 @@ apex09EnsurePermissionAndInit(requestPermission: false)
 后台首次拉起时 `runApp()` 还没有执行，`GetMaterialApp` 也没有创建，因此以下配置尚未自动写入 GetX：
 
 ```dart
-translations: Apex09Translations(),
-locale: Apex09LanguageUtils.instance.apex09CurrentLocale(),
+translations: AppTranslations(),
+locale: AppLanguageUtils.instance.currentLocale(),
 fallbackLocale: const Locale('en', 'US'),
 ```
 
@@ -513,7 +513,7 @@ fallbackLocale: const Locale('en', 'US'),
 
 它不会报错，也不会返回空字符串，但中文、日文等设备或已保存的 App 语言仍会得到英文 key，不是正确的本地化文本。
 
-Apex09 的通知初始化中，以下内容会受到影响：
+宿主 App 的通知初始化中，以下内容会受到影响：
 
 - 常驻快捷通知的 `Home`、`Merge`、`Import`、`Convert`。
 - 自定义通知按钮的 `Check`。
@@ -522,9 +522,9 @@ Apex09 的通知初始化中，以下内容会受到影响：
 
 部分周期通知和广播通知注册后会设置“已注册”标记。即使用户稍后真正打开 App，前台再次调用通知初始化也可能因为这些标记而跳过注册，所以不能依靠 `GetMaterialApp` 创建后自动修正文案。
 
-#### Apex09 接入方式
+#### 通用接入方式
 
-在 `Apex09StorageUtils.apex09InitStorage()` 完成之后、任何通知初始化之前，手动写入翻译表、当前语言和回退语言：
+在 `AppStorageUtils.initStorage()` 完成之后、任何通知初始化之前，手动写入翻译表、当前语言和回退语言：
 
 确认 `main.dart` 可以使用 Flutter 的 `Locale` 和 GetX 的 `Get`；如果项目没有通过自己的公共库导出它们，可直接导入：
 
@@ -534,24 +534,24 @@ import 'package:get/get.dart';
 ```
 
 ```dart
-Future<void> apex09InitializeBackground() async {
+Future<void> initializeBackground() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Apex09StorageUtils.apex09InitStorage();
+  await AppStorageUtils.initStorage();
 
-  Get.addTranslations(Apex09Translations().keys);
-  Get.locale = Apex09LanguageUtils.instance.apex09CurrentLocale();
+  Get.addTranslations(AppTranslations().keys);
+  Get.locale = AppLanguageUtils.instance.currentLocale();
   Get.fallbackLocale = const Locale('en', 'US');
 
-  Apex09NewNotificationUtils.instance.startSessionBackground();
+  AppNotificationUtils.instance.startSessionBackground();
 
-  await Apex09NewNotificationUtils.instance
-      .apex09EnsurePermissionAndInit(
+  await AppNotificationUtils.instance
+      .ensurePermissionAndInit(
         requestPermission: false,
       );
 
-  await Apex09AdjustUtils.instance.apex09InitAdjust(
-    apex09HeadlessStart:
+  await AppAdjustUtils.instance.initAdjust(
+    headlessStart:
         FlutterHeadlessLifecycleBootstrap.startedHeadlessly,
   );
 }
@@ -559,7 +559,7 @@ Future<void> apex09InitializeBackground() async {
 
 注意调用顺序：
 
-1. 必须先初始化 Storage，因为 `apex09CurrentLocale()` 会读取用户已经保存的语言。
+1. 必须先初始化 Storage，因为 `currentLocale()` 会读取用户已经保存的语言。
 2. 然后调用 `Get.addTranslations()`、设置 `Get.locale` 和 `Get.fallbackLocale`。
 3. 最后才能调用任何会计算 `.tr` 文案的通知方法。
 
@@ -592,7 +592,7 @@ com.flutter.headless.bootstrap.flutter_headless_lifecycle_bootstrap.HeadlessLife
 不应该继续出现：
 
 ```text
-com.example.apex09.Apex09LifecycleService
+com.example.app.LegacyLifecycleService
 ```
 
 同一个应用内也不应该有第二个声明 `android.media.MediaRouteProviderService` 的 Service，除非它确实实现了真正的 MediaRoute Provider 协议并且是业务需要的。
@@ -663,7 +663,7 @@ adb logcat -v time \
 ### 场景 1：安装后从未手动打开 App
 
 1. 安装 release/debug 包。
-2. 不点击 Apex09 图标。
+2. 不点击宿主 App 图标。
 3. 打开 YouTube。
 4. 查看是否出现 `serviceOnCreate`。
 5. 查看是否出现 `backgroundInitializationCompleted`。
@@ -764,7 +764,7 @@ android:exported="true"
 
 插件 `pubspec.yaml` 只声明 Android 平台。iOS 和其他平台需要继续使用宿主 App 原来的启动流程。
 
-插件 Android `minSdk` 是 26。宿主 App 的 `minSdk` 不能低于 26；Apex09 当前也是 26，可以直接接入。
+插件 Android `minSdk` 是 26。宿主 App 的 `minSdk` 不能低于 26。
 
 ### 6. 同一进程只能由本插件管理一个 Engine
 
