@@ -20,4 +20,15 @@ open class LifecycleFlutterFragmentActivity : FlutterFragmentActivity() {
         super.onNewIntent(intent)
         PersistentFlutterEngineManager.requestUi("flutter_fragment_activity_new_intent")
     }
+
+    override fun onDestroy() {
+        val shouldHandleUiHostDestruction = !isChangingConfigurations
+        super.onDestroy()
+        if (shouldHandleUiHostDestruction) {
+            PersistentFlutterEngineManager.destroyEngineWhenUiHostDestroyed(
+                context = applicationContext,
+                source = "flutter_fragment_activity_on_destroy",
+            )
+        }
+    }
 }

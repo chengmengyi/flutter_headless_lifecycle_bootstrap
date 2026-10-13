@@ -17,19 +17,24 @@ class HeadlessLifecycleService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "serviceOnCreate")
+        ensureEngine("lifecycle_service_on_create")
+    }
+
+    private fun ensureEngine(source: String) {
         runCatching {
             PersistentFlutterEngineManager.getOrCreateEngine(
                 context = applicationContext,
                 requestUi = false,
-                source = "lifecycle_service_on_create",
+                source = source,
             )
         }.onFailure {
-            Log.e(TAG, "service failed to create FlutterEngine", it)
+            Log.e(TAG, "service failed to ensure FlutterEngine source=$source", it)
         }
     }
 
     override fun onBind(intent: Intent?): IBinder? {
         Log.d(TAG, "serviceOnBind action=${intent?.action}")
+        ensureEngine("lifecycle_service_on_bind")
         return null
     }
 
@@ -39,6 +44,7 @@ class HeadlessLifecycleService : Service() {
         startId: Int,
     ): Int {
         Log.d(TAG, "serviceOnStartCommand action=${intent?.action}")
+        ensureEngine("lifecycle_service_on_start_command")
         return START_NOT_STICKY
     }
 

@@ -33,7 +33,7 @@ LifecycleFlutterActivity 复用同一个 FlutterEngine
 宿主 App 调用 runApp()
 ```
 
-FlutterEngine 不会因为 `HeadlessLifecycleService.onDestroy()` 或 MainActivity 销毁而主动销毁。Android 系统杀掉整个进程后，FlutterEngine 会自然消失；插件不会尝试绕过系统进程管理。
+默认情况下，FlutterEngine 不会因为 `HeadlessLifecycleService.onDestroy()` 或 MainActivity 销毁而主动销毁。宿主也可以开启“UI Activity 销毁时销毁 Engine”：划掉任务或退出 Activity 后清空 Dart isolate 和路由，下次由 YouTube/其他媒体应用或 App 图标重新创建唯一 Engine。Android 系统杀掉整个进程后，FlutterEngine 会自然消失；插件不会尝试绕过系统进程管理。
 
 ## 一、在宿主 App 中添加依赖
 
@@ -121,9 +121,32 @@ class MainActivity : LifecycleFlutterFragmentActivity()
 
 - 创建或获取进程内唯一 FlutterEngine。
 - 通知 Dart 需要显示 UI。
-- Activity 销毁时保留 FlutterEngine。
+- 默认在 Activity 销毁时保留 FlutterEngine。
+- 宿主开启可选配置后，在非配置变更导致的 Activity 销毁时安全销毁 Engine。
 
 如果 MainActivity 原来有自定义 `configureFlutterEngine()`、`onNewIntent()` 或其他代码，需要保留原逻辑并正常调用 `super`。
+
+### Activity 销毁后按冷启动重新进入
+
+如果产品要求“从最近任务划掉 App 后，再点图标必须重新执行 Dart entrypoint、显示启动页并按启动逻辑选择下一页”，在宿主 App 的 `<application>` 中添加：
+
+```xml
+<meta-data
+    android:name="flutter_headless_lifecycle_bootstrap.destroy_engine_when_ui_destroyed"
+    android:value="true" />
+```
+
+开启后：
+
+- `LifecycleFlutterActivity`/`LifecycleFlutterFragmentActivity` 因非配置变更而销毁时，由插件的 Engine Manager 销毁共享 Engine。
+- 插件会同步清空 Engine、MethodChannel、Dart ready、UI requested 和创建来源状态，不会留下已销毁的 Engine 引用。
+- 下次点击 App 图标时创建新 Engine，重新执行 `main()` 和宿主的后台/UI 初始化。
+- 下次外部媒体应用重新发现、绑定或启动 `HeadlessLifecycleService` 时，也会按需创建新 Engine。
+- 屏幕旋转等 `isChangingConfigurations == true` 的情况不会触发销毁。
+
+不要为了实现这个行为把 MainActivity 改回普通 `FlutterActivity`，否则 Service Engine 和 Activity Engine 可能同时存在。也不要自行把 `shouldDestroyEngineWithHost()` 改为 `true`；共享 Engine 由 Manager 持有，必须由 Manager 在销毁时同步清理引用。
+
+如果不添加上述 metadata，默认行为保持不变：Activity 销毁后 Engine 和 Dart isolate 继续存在。
 
 ## 四、检查 Launcher intent-filter
 
@@ -815,6 +838,19 @@ adb logcat -v time \
    - entrypoint 是否为顶层方法。
    - entrypoint 是否位于配置的 Dart library 中。
 
+### 场景 9：划掉任务后重建 Engine
+
+仅在开启 `destroy_engine_when_ui_destroyed` 时测试：
+
+1. 启动 App 并连续进入几个二级页面，例如文件选择结果页。
+2. 从最近任务中划掉 App。
+3. 日志应出现 `destroyEngine source=flutter_activity_on_destroy` 和 `destroyEngine complete`。
+4. 再次点击 App 图标。
+5. 日志应出现新的 `createEngine source=flutter_activity requestUi=true`，而不是复用旧 Engine。
+6. 确认重新执行 Dart entrypoint、后台初始化和 UI 初始化，并从启动页按宿主代码进入下一页。
+7. 再次划掉 App，然后打开会触发媒体路由发现的外部应用。
+8. 确认 Service 的 `onCreate`、`onBind` 或 `onStartCommand` 能重新创建 Engine，并且进程内没有第二个 Engine。
+
 ## 十二、重要限制和注意事项
 
 ### 1. 强行停止后无法保证拉起
@@ -823,7 +859,7 @@ adb logcat -v time \
 
 ### 2. FlutterEngine 常驻不等于进程永远存活
 
-插件只是不主动调用 `FlutterEngine.destroy()`。FlutterEngine 本身不会提高 Android 进程优先级。系统内存不足时仍然可以杀掉进程。
+默认配置下插件不会主动调用 `FlutterEngine.destroy()`；开启 `destroy_engine_when_ui_destroyed` 后，非配置变更导致的 UI Activity 销毁会主动销毁 Engine。FlutterEngine 本身不会提高 Android 进程优先级，系统内存不足时仍然可以杀掉进程。
 
 `flutter_local_notification_plugins` 自己的 ForegroundService、Job、WorkManager 和 Alarm 能提高部分任务的恢复能力，但不代表进程绝对不会被杀。
 
@@ -897,6 +933,7 @@ Manifest intent-filter
 唯一 FlutterEngine
 Engine 常驻
 Activity 复用 Engine
+可选的 Activity 销毁时 Engine 重建策略
 Android/Dart 握手
 UI 请求防丢失
 后台/UI 初始化只执行一次

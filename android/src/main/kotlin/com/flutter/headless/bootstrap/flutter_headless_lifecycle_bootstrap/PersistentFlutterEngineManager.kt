@@ -17,6 +17,8 @@ internal object PersistentFlutterEngineManager {
         "flutter_headless_lifecycle_bootstrap.dart_entrypoint"
     private const val META_DATA_DART_LIBRARY =
         "flutter_headless_lifecycle_bootstrap.dart_library"
+    private const val META_DATA_DESTROY_ENGINE_WHEN_UI_DESTROYED =
+        "flutter_headless_lifecycle_bootstrap.destroy_engine_when_ui_destroyed"
 
     private var flutterEngine: FlutterEngine? = null
     private var coordinationChannel: MethodChannel? = null
@@ -98,6 +100,43 @@ internal object PersistentFlutterEngineManager {
     }
 
     @Synchronized
+    fun destroyEngineWhenUiHostDestroyed(
+        context: Context,
+        source: String,
+    ) {
+        checkMainThread()
+        if (!readMetaDataBoolean(
+                context.applicationContext,
+                META_DATA_DESTROY_ENGINE_WHEN_UI_DESTROYED,
+            )
+        ) {
+            Log.d(TAG, "retainEngine source=$source reason=manifest_config_disabled")
+            return
+        }
+
+        val engineToDestroy = flutterEngine
+        if (engineToDestroy == null) {
+            Log.d(TAG, "destroyEngine skipped source=$source reason=no_engine")
+            resetEngineState()
+            return
+        }
+
+        Log.d(
+            TAG,
+            "destroyEngine source=$source createdBy=$engineCreationSource " +
+                "dartReady=$dartBootstrapReady uiRequested=$uiRequested",
+        )
+        resetEngineState()
+        runCatching {
+            engineToDestroy.destroy()
+        }.onSuccess {
+            Log.d(TAG, "destroyEngine complete source=$source")
+        }.onFailure { error ->
+            Log.e(TAG, "destroyEngine failed source=$source", error)
+        }
+    }
+
+    @Synchronized
     fun onPluginAttached(channel: MethodChannel) {
         coordinationChannel = channel
         Log.d(TAG, "pluginAttached engineExists=${flutterEngine != null}")
@@ -153,6 +192,14 @@ internal object PersistentFlutterEngineManager {
         )
     }
 
+    private fun resetEngineState() {
+        flutterEngine = null
+        coordinationChannel = null
+        dartBootstrapReady = false
+        uiRequested = false
+        engineCreationSource = null
+    }
+
     @Suppress("DEPRECATION")
     private fun readMetaDataString(
         context: Context,
@@ -166,6 +213,21 @@ internal object PersistentFlutterEngineManager {
         }.onFailure {
             Log.w(TAG, "readMetaData failed key=$key", it)
         }.getOrNull()
+
+    @Suppress("DEPRECATION")
+    private fun readMetaDataBoolean(
+        context: Context,
+        key: String,
+    ): Boolean =
+        runCatching {
+            context.packageManager
+                .getApplicationInfo(context.packageName, PackageManager.GET_META_DATA)
+                .metaData
+                ?.getBoolean(key, false)
+                ?: false
+        }.onFailure {
+            Log.w(TAG, "readMetaData failed key=$key", it)
+        }.getOrDefault(false)
 
     private fun checkMainThread() {
         check(Looper.myLooper() == Looper.getMainLooper()) {

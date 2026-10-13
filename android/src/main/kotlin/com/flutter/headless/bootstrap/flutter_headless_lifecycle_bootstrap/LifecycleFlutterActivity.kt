@@ -20,4 +20,15 @@ open class LifecycleFlutterActivity : FlutterActivity() {
         super.onNewIntent(intent)
         PersistentFlutterEngineManager.requestUi("flutter_activity_new_intent")
     }
+
+    override fun onDestroy() {
+        val shouldHandleUiHostDestruction = !isChangingConfigurations
+        super.onDestroy()
+        if (shouldHandleUiHostDestruction) {
+            PersistentFlutterEngineManager.destroyEngineWhenUiHostDestroyed(
+                context = applicationContext,
+                source = "flutter_activity_on_destroy",
+            )
+        }
+    }
 }
