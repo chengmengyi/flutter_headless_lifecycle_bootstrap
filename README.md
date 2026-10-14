@@ -5,7 +5,7 @@ Android-only Flutter 插件：当外部应用通过 `MediaRouteProviderService` 
 这个插件解决以下问题：
 
 - Android Service 拉起进程后，普通 Flutter `main()` 不会自动执行。
-- 后台初始化需要一直等待 Adjust、cloak、referrer 等异步结果。
+- 后台初始化需要一直等待 Adjust/AppsFlyer（AF）、cloak、referrer 等异步结果。
 - 后台 FlutterEngine 和前台 FlutterEngine 同时存在时，部分插件的静态 MethodChannel 会互相覆盖。
 - 多个 App 需要复用同一套 Service、FlutterEngine 和 Activity 接入逻辑。
 
@@ -42,7 +42,9 @@ LifecycleFlutterActivity 复用同一个 FlutterEngine
 ```yaml
 dependencies:
   flutter_headless_lifecycle_bootstrap: 最新版本
+  # 二选一：
   flutter_check_adjust: 最新版本
+  # flutter_check_af_new: 最新版本
 ```
 
 然后执行：
@@ -206,7 +208,7 @@ entrypoint 必须满足：
 
 ## 六、拆分原来的 main()
 
-这是无法完全放进公共插件的部分，因为每个 App 的 Storage、Adjust、通知、广告、数据库和根 Widget 都不同。
+这是无法完全放进公共插件的部分，因为每个 App 的 Storage、Adjust/AF、通知、广告、数据库和根 Widget 都不同。
 
 原来的 `main()` 需要拆成：
 
@@ -264,14 +266,17 @@ Future<void> initializeBackground() async {
         requestPermission: false,
       );
 
+  // Adjust 项目：需要把真实的初始启动来源传给 Adjust 工具类。
   await AppAdjustUtils.instance.initAdjust(
-    headlessStart:
-        FlutterHeadlessLifecycleBootstrap.startedHeadlessly,
+    headlessStart: FlutterHeadlessLifecycleBootstrap.startedHeadlessly,
   );
+
+  // AF 项目改为调用自己的 AF 初始化；不需要 headlessStart 参数。
+  // await AppAfUtils.instance.initAf();
 }
 ```
 
-示例中的 `AppStorageUtils`、`AppNotificationUtils`、`AppAdjustUtils` 等都是
+示例中的 `AppStorageUtils`、`AppNotificationUtils`、`AppAdjustUtils`、`AppAfUtils` 等都是
 通用占位名称，需要替换成宿主项目自己的类和方法；公共插件不要求这些类真实存在。
 
 执行顺序不能随意交换：
@@ -279,13 +284,14 @@ Future<void> initializeBackground() async {
 1. 先初始化 Storage。
 2. 初始化通知文案依赖的本地语言和 GetX 翻译数据。
 3. 再执行完整通知初始化，但必须传 `requestPermission: false`。
-4. 最后启动 Adjust、cloak 和 referrer 判断，并把本次是否由无界面
-   Service 拉起传给 Adjust 工具类。
+4. 最后启动归因、cloak 和 referrer 判断。Adjust 项目还要把本次是否由无界面
+   Service 拉起传给 Adjust 工具类；AF 项目不需要该参数。
 
-#### 6.2.1 Headless 上报 install，但不上报 session
+#### 6.2.1 Headless 上报业务 install，但不上报业务 session
 
-如果希望 Service 无界面拉活也计为安装上报，把 install 放进
-`initializeBackground()`；不要把 session 放进去：
+如果希望 Service 无界面拉活也计为安装上报，把业务 install 放进
+`initializeBackground()`；不要把宿主自己的业务 session 放进去。这里不包含
+Adjust/AF 为获取归因而发送的 SDK Session：
 
 ```dart
 unawaited(AppTbaUtils.instance.trackInstallEvent());
@@ -361,7 +367,9 @@ Future<bool> _trackInstallEventInternal({
 
 A 包时 `ensurePermissionAndInit()` 仍然会注册普通通知。执行到 `startMediaNotificationsIfNeeded()` 时，因为 `isBPackage == false`，媒体通知会暂时跳过。
 
-如果后续判断为 B 包，`AppAdjustUtils.refreshBUserState()` 会重新调用 `startMediaNotificationsIfNeeded()`，完成媒体通知注册。插件不会设置等待超时，所以只要进程和 FlutterEngine 还存在，后续回调仍可执行。
+如果后续判断为 B 包，宿主的归因工具类会在 `refreshBUserState()` 中重新调用
+`startMediaNotificationsIfNeeded()`，完成媒体通知注册。插件不会设置等待超时，
+所以只要进程和 FlutterEngine 还存在，后续回调仍可执行。
 
 后台初始化中禁止执行以下操作：
 
@@ -379,8 +387,8 @@ A 包时 `ensurePermissionAndInit()` 仍然会注册普通通知。执行到 `st
 
 ```dart
 Future<void> initializeUi() async {
-  // 必须放在 UI 初始化最前面。如果 Headless Adjust 的模拟前台仍在
-  // 进行，这里会先结束模拟状态，再切换到真实 Activity 前台状态。
+  // 仅 Adjust 项目需要，而且必须放在 UI 初始化最前面。
+  // AF 项目删除这一行，不需要进行生命周期交接。
   FlutterCheckAdjust.instance.switchToUiLifecycle();
 
   await SystemChrome.setPreferredOrientations(
@@ -427,7 +435,7 @@ Future<void> initializeUi() async {
 
 - 不要再次调用 `AppStorageUtils.initStorage()`。
 - 不要再次调用 `AppNotificationUtils.instance.startSessionBackground()`。
-- 不要再次调用 `AppAdjustUtils.instance.initAdjust()`。
+- 不要再次调用已经在后台执行过的 Adjust/AF 初始化方法。
 - `runApp()` 只能调用一次。
 - `LauncherController` 中前台调用 `ensurePermissionAndInit(requestPermission: true)` 可以保留，用于请求权限和完成前台逻辑。
 
@@ -443,11 +451,21 @@ Future<void> main() async {
 
 如果这个工程还支持 iOS、macOS、Windows 或 Web，不要直接照抄上面的 `main()`。本插件目前只声明 Android 平台，其他平台需要在 `main()` 中走原来的正常初始化和 `runApp()` 路径。
 
-## 七、修改宿主 App 的 Adjust 工具类
+## 七、接入 Adjust 或 AppsFlyer（AF）
+
+归因方案二选一：
+
+- Adjust 使用 7.1～7.5 的模拟前台与 UI 生命周期交接方案。
+- AF 使用 7.1～7.3 的通用初始化要求，以及 7.6 的 Application Context 与手动
+  Headless Session 方案。
+
+不要把 Adjust 的 `onResume/onPause`、15 秒安全窗口或
+`switchToUiLifecycle()` 搬到 AF 项目；也不要在 Adjust 项目中套用 AF 的
+`logSession(applicationContext)`。
 
 ### 7.1 增加一次性初始化保护
 
-建议增加：
+归因工具类都建议增加一次性初始化保护。以下以 Adjust 为例：
 
 ```dart
 bool _hasInitializedAdjust = false;
@@ -491,7 +509,7 @@ AppNotificationUtils.instance
     .startMediaNotificationsIfNeeded();
 ```
 
-建议给 `startMediaNotificationsIfNeeded()` 增加“正在启动”的 Future 或布尔值，避免 Adjust、cloak、referrer 回调接近时并发注册媒体通知。
+建议给 `startMediaNotificationsIfNeeded()` 增加“正在启动”的 Future 或布尔值，避免归因、cloak、referrer 回调接近时并发注册媒体通知。
 
 ### 7.4 把 Headless 启动状态传给 flutter_check_adjust
 
@@ -577,6 +595,39 @@ FlutterCheckAdjust.instance.switchToUiLifecycle();
 后续用户按 Home、重新进入 App 等生命周期继续由 Adjust Android SDK 自动
 管理，宿主不需要再次调用该方法。
 
+### 7.6 AppsFlyer（AF）的 Headless Session
+
+AF 不使用 Adjust 的模拟前台方案，也不需要 `headlessStart`、15 秒安全窗口或
+UI 生命周期交接。宿主在 `initializeBackground()` 中正常初始化 AF：
+
+```dart
+await AppAfUtils.instance.initAf();
+```
+
+`flutter_check_af_new` 的 Android 实现需要满足以下行为：
+
+1. `initSdk` 使用 `applicationContext`，不能因为没有 Activity 而丢弃 MethodChannel 调用。
+2. `setCustomerUserId` 和转换数据监听必须在发送 Session 前完成。
+3. 调用 `AppsFlyerLib.start(applicationContext)` 初始化 SDK。
+4. 如果当前没有 Activity，只调用一次
+   `AppsFlyerLib.logSession(applicationContext)`，主动发送 Headless Session。
+5. 如果已有 Activity，不手动调用 `logSession`，由 AF 的真实 Activity 生命周期管理 Session。
+
+AF 项目的 `initializeUi()` 不需要调用任何类似
+`switchToUiLifecycle()` 的方法。后台 Engine 后来绑定 Activity 时，AF 插件通过
+`ActivityAware.onAttachedToActivity()` 获取真实 Activity；后续 Home、重新进入等
+前后台切换由 AF SDK 自动处理。
+
+Headless Session 必须有进程内一次性保护，避免 Service 多次 `onCreate/onBind`
+重复发送。建议保留以下关键日志用于验证：
+
+```text
+check user---> af channel initSdk result--->success
+check user---> af native start entered--->{context: android.app.Application, hasActivity: false}
+check user---> af native headless logSession called
+check user---> request af result--->...
+```
+
 ## 八、通知初始化注意事项
 
 后台入口调用：
@@ -656,10 +707,13 @@ Future<void> initializeBackground() async {
         requestPermission: false,
       );
 
+  // Adjust 项目：
   await AppAdjustUtils.instance.initAdjust(
-    headlessStart:
-        FlutterHeadlessLifecycleBootstrap.startedHeadlessly,
+    headlessStart: FlutterHeadlessLifecycleBootstrap.startedHeadlessly,
   );
+
+  // AF 项目二选一改为：
+  // await AppAfUtils.instance.initAf();
 }
 ```
 
@@ -737,7 +791,7 @@ dartPhase phase=uiInitializationCompleted
 
 不应该再次出现第二条 `createEngine`。
 
-通过 Service 首次拉活时，Flutter debug 日志还应出现：
+Adjust 项目通过 Service 首次拉活时，Flutter debug 日志还应出现：
 
 ```text
 check user---> start request adjust
@@ -749,9 +803,24 @@ check user---> finish headless adjust lifecycle--->...
 最后一条的原因只可能是 attribution callback、safety timeout 或 UI 主动交接。
 正常点击图标冷启动时不应该出现 `start headless adjust lifecycle`。
 
+AF 项目通过 Service 首次拉活时应出现：
+
+```text
+check user---> af channel initSdk result--->success
+check user---> af channel conversion listener ready
+check user---> af native start entered--->{context: android.app.Application, hasActivity: false}
+check user---> af native headless logSession called
+check user---> request af result--->...
+```
+
+AF 项目不应该出现 Adjust 的 `start headless adjust lifecycle` 或
+`switchToUiLifecycle` 日志。
+
 ## 十一、必须执行的测试清单
 
-测试前建议先执行以下命令，同时查看并保存 Headless、Flutter 和 Adjust 日志：
+测试前根据归因方案选择日志命令。
+
+Adjust：
 
 ```shell
 adb logcat -v time \
@@ -760,6 +829,17 @@ adb logcat -v time \
   'Adjust:V' \
   'AdjustBridge:V' \
   '*:S' | tee "$HOME/Downloads/adjust_headless.txt"
+```
+
+AF：
+
+```shell
+adb logcat -v time \
+  'HeadlessLifecycle:D' \
+  'AppsFlyer_6.15.2:V' \
+  'AppsFlyer_FlutterPlugin:V' \
+  'flutter:I' \
+  '*:S' | tee "$HOME/Downloads/af_headless.txt"
 ```
 
 这里使用 `$HOME`，不依赖 `/Users/某个用户名`，换电脑后仍会保存到当前登录
@@ -774,20 +854,22 @@ adb logcat -v time \
 4. 查看是否出现 `serviceOnCreate`。
 5. 查看是否出现 `backgroundInitializationCompleted`。
 6. 确认出现一次 install 请求及结果日志。
-7. 确认没有 session 请求日志。
+7. 确认没有宿主自己的业务 session 请求；Adjust/AF 为获取归因发送的 SDK Session
+   应按各自方案正常出现。
 8. 验证普通通知配置已经注册。
 
 ### 场景 2：默认 A 包
 
-1. 确认 Adjust 结果尚未返回或判断为 A。
+1. 确认 Adjust/AF 结果尚未返回或判断为 A。
 2. 验证普通通知正常。
 3. 验证媒体通知尚未注册。
 
 ### 场景 3：延迟变成 B 包
 
 1. 保持进程存在。
-2. 不点击 App 图标，等待 Adjust、cloak、referrer 回调。
-3. 确认出现 `request adjust result`，证明 Headless Adjust session 已启动。
+2. 不点击 App 图标，等待归因、cloak、referrer 回调。
+3. Adjust 确认出现 `request adjust result`；AF 确认出现
+   `af native headless logSession called` 和 `request af result`。
 4. 确认 `refreshBUserState()` 变成 B。
 5. 确认 `startMediaNotificationsIfNeeded()` 被再次调用。
 6. 确认媒体通知注册成功。
@@ -799,8 +881,9 @@ adb logcat -v time \
 3. 确认只出现 `reuseEngine`，没有第二次 `createEngine`。
 4. 确认启动页和首页正常显示。
 5. 确认 install 没有重复成功上报，Headless 失败时允许 UI 重试。
-6. 确认打开 UI 后才出现 session 请求。
-7. 确认通知点击、悬浮窗点击、广告和页面跳转正常，且没有重复触发两次。
+6. 确认打开 UI 后才出现宿主自己的业务 session 请求；归因 SDK Session 不受此条限制。
+7. Adjust 确认模拟生命周期已交接；AF 不需要生命周期交接。
+8. 确认通知点击、悬浮窗点击、广告和页面跳转正常，且没有重复触发两次。
 
 ### 场景 5：先正常打开 App
 
@@ -920,7 +1003,7 @@ android:exported="true"
 App自己的 entrypoint 名称
 App自己的 Storage 初始化
 App自己的通知工具类
-App自己的 Adjust 工具类
+App自己的 Adjust 或 AF 工具类
 App自己的 UI 初始化
 App自己的根 Widget
 ```
