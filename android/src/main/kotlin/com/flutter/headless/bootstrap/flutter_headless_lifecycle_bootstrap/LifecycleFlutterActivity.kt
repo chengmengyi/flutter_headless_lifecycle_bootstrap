@@ -2,11 +2,17 @@ package com.flutter.headless.bootstrap.flutter_headless_lifecycle_bootstrap
 
 import android.content.Context
 import android.content.Intent
+import android.os.Bundle
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 
 /** FlutterActivity that reuses the process-wide engine created by the service. */
 open class LifecycleFlutterActivity : FlutterActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        FirstUiLaunchGate.markUiLaunched(this)
+        super.onCreate(savedInstanceState)
+    }
+
     override fun provideFlutterEngine(context: Context): FlutterEngine =
         PersistentFlutterEngineManager.getOrCreateEngine(
             context = context,

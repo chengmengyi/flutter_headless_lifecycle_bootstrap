@@ -150,6 +150,34 @@ class MainActivity : LifecycleFlutterFragmentActivity()
 
 如果不添加上述 metadata，默认行为保持不变：Activity 销毁后 Engine 和 Dart isolate 继续存在。
 
+### 首次真正打开 App 前禁止无界面拉活
+
+如果产品要求“安装后必须先由用户真正打开一次 App，之后 YouTube/其他媒体应用
+才能通过 Service 创建 FlutterEngine”，在宿主 App 的 `<application>` 中添加：
+
+```xml
+<meta-data
+    android:name="flutter_headless_lifecycle_bootstrap.require_first_ui_launch"
+    android:value="true" />
+```
+
+开启后的行为：
+
+- 新安装且从未创建过 UI Activity 时，外部应用仍可能让 Android 创建进程和
+  `HeadlessLifecycleService`，但插件不会创建 FlutterEngine，也不会执行 Dart
+  entrypoint、`backgroundInitializer`、Firebase、归因或通知初始化。
+- 用户第一次真正进入 `LifecycleFlutterActivity` 或
+  `LifecycleFlutterFragmentActivity` 时，插件会在创建 FlutterEngine 之前持久化
+  “UI 已启动”标记，然后正常执行后台初始化和 UI 初始化。
+- 此后即使进程被杀、任务被划掉或设备重启，标记仍然保留，Service 可以继续按
+  原逻辑无界面创建 Engine。
+- 卸载重装或清除应用数据会清除标记，重新回到“首次 UI 启动前禁止拉活”的状态。
+- 系统设置中的“强行停止”仍受 Android stopped 状态限制，不能依靠此功能绕过。
+
+该功能默认关闭，以保持旧版本接入行为不变。不要在 Dart 的
+`backgroundInitializer` 中读取本地标记后再退出；执行到 Dart 时 FlutterEngine
+已经创建，无法达到阻止首次无界面拉活的目的。
+
 ## 四、检查 Launcher intent-filter
 
 MainActivity 保留以下内容：
@@ -781,6 +809,23 @@ dartBootstrapReady
 dartPhase phase=backgroundInitializationCompleted
 ```
 
+如果开启了 `require_first_ui_launch`，并且当前安装从未真正打开过 App，首次由
+外部媒体应用触发时应该改为看到：
+
+```text
+serviceOnCreate
+headless start blocked reason=first_ui_not_launched
+service skipped FlutterEngine source=lifecycle_service_on_create
+```
+
+此时不应出现 `createEngine`、`pluginAttached`、`dartBootstrapReady` 或任何 Dart
+业务初始化日志。用户第一次点击 App 图标时应看到：
+
+```text
+firstUiLaunchGate marked UI launched persisted=true
+createEngine source=flutter_activity requestUi=true
+```
+
 用户随后打开 App 时应看到：
 
 ```text
@@ -852,11 +897,28 @@ adb logcat -v time \
 2. 不点击宿主 App 图标。
 3. 打开 YouTube。
 4. 查看是否出现 `serviceOnCreate`。
-5. 查看是否出现 `backgroundInitializationCompleted`。
-6. 确认出现一次 install 请求及结果日志。
-7. 确认没有宿主自己的业务 session 请求；Adjust/AF 为获取归因发送的 SDK Session
-   应按各自方案正常出现。
-8. 验证普通通知配置已经注册。
+5. 如果没有开启 `require_first_ui_launch`，继续确认
+   `backgroundInitializationCompleted`、install、归因和普通通知初始化符合原有预期。
+6. 如果开启了 `require_first_ui_launch`，确认出现
+   `headless start blocked reason=first_ui_not_launched` 和
+   `service skipped FlutterEngine`。
+7. 开启门禁时确认没有 `createEngine`、`dartBootstrapReady`、
+   `backgroundInitializationCompleted`、install、归因和通知初始化日志。
+
+### 场景 1B：首次 UI 启动后允许拉活
+
+仅在开启 `require_first_ui_launch` 时测试：
+
+1. 点击宿主 App 图标，确认出现
+   `firstUiLaunchGate marked UI launched persisted=true`。
+2. 确认 App 正常执行后台初始化、启动页和 UI 初始化。
+3. 从最近任务划掉 App；如果同时开启
+   `destroy_engine_when_ui_destroyed`，确认共享 Engine 已销毁。
+4. 再打开 YouTube。
+5. 确认 Service 可以创建新 Engine，并出现
+   `backgroundInitializationCompleted`。
+6. 杀进程或重启手机后重复测试，确认“UI 已启动”标记仍然有效。
+7. 清除应用数据或卸载重装后再次测试，确认首次无界面拉活重新被阻止。
 
 ### 场景 2：默认 A 包
 
@@ -914,8 +976,10 @@ adb logcat -v time \
 
 1. 构建 release APK/AAB。
 2. 安装 release 包。
-3. 重复“从未打开 App，先打开 YouTube”的测试。
-4. 如果日志只有 `createEngine`，没有 `dartBootstrapReady`，优先检查：
+3. 重复“从未打开 App，先打开 YouTube”的测试；开启
+   `require_first_ui_launch` 时必须不创建 Engine，关闭时按原逻辑创建 Engine。
+4. 在允许创建 Engine 的场景中，如果日志只有 `createEngine`，没有
+   `dartBootstrapReady`，优先检查：
    - entrypoint 名称是否完全一致。
    - 是否添加 `@pragma('vm:entry-point')`。
    - entrypoint 是否为顶层方法。

@@ -21,6 +21,10 @@ class HeadlessLifecycleService : Service() {
     }
 
     private fun ensureEngine(source: String) {
+        if (!FirstUiLaunchGate.canStartHeadlessly(applicationContext)) {
+            Log.d(TAG, "service skipped FlutterEngine source=$source")
+            return
+        }
         runCatching {
             PersistentFlutterEngineManager.getOrCreateEngine(
                 context = applicationContext,
