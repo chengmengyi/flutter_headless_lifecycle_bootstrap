@@ -15,7 +15,6 @@ typedef HeadlessLifecycleInitializer = FutureOr<void> Function();
 /// exported lifecycle service or by the launcher activity.
 class FlutterHeadlessLifecycleBootstrap {
   FlutterHeadlessLifecycleBootstrap._();
-
   static const String channelName =
       'flutter_headless_lifecycle_bootstrap/bootstrap';
 
